@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Agent POC</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .message { margin-bottom: 15px; padding: 10px; border-radius: 8px; }
+        .user-message { background-color: #e3f2fd; border-left: 4px solid #2196f3; }
+        .agent-message { background-color: #f3e5f5; border-left: 4px solid #9c27b0; }
+        .tool-call { background-color: #fff3e0; border-left: 4px solid #ff9800; font-family: monospace; }
+        .tool-result { background-color: #e8f5e8; border-left: 4px solid #4caf50; font-family: monospace; }
+        .code-output { background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; padding: 10px; margin-top: 10px; }
+        #conversation { height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>LLM Agent POC - Multi-Tool Reasoning</h1>
+        
+        <!-- Model Selection -->
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <label for="modelSelect" class="form-label">Select LLM Provider/Model:</label>
+                <select class="form-select" id="modelSelect">
+                    <option value="openai/gpt-4">OpenAI GPT-4</option>
+                    <option value="openai/gpt-3.5-turbo">OpenAI GPT-3.5 Turbo</option>
+                    <option value="anthropic/claude-3">Anthropic Claude 3</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label for="apiKey" class="form-label">API Key:</label>
+                <input type="password" class="form-control" id="apiKey" placeholder="Enter your API key">
+            </div>
+        </div>
+
+        <!-- Alert Container -->
+        <div id="alertContainer"></div>
+
+        <!-- Conversation Window -->
+        <div id="conversation" class="mb-3"></div>
+
+        <!-- Input Form -->
+        <div class="input-group">
+            <input type="text" class="form-control" id="userInput" placeholder="Type your message..." onkeypress="handleKeyPress(event)">
+            <button class="btn btn-primary" onclick="sendMessage()">Send</button>
+            <button class="btn btn-secondary" onclick="clearConversation()">Clear</button>
+        </div>
+
+        <div class="mt-3">
+            <small class="text-muted">
+                Available tools: Google Search, AI Pipe API, JavaScript Code Execution
+            </small>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Global state
+        let conversation = [];
+        let isProcessing = false;
+
+        // Tool definitions for OpenAI function calling
+        const tools = [
+            {
+                type: "function",
+                function: {
+                    name: "google_search",
+                    description: "Search Google and return snippet results",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            query: {
+                                type: "string",
+                                description: "The search query"
+                            },
+                            num_results: {
+                                type: "integer",
+                                description: "Number of results to return (default: 5)",
+                                default: 5
+                            }
+                        },
+                        required: ["query"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "ai_pipe",
+                    description: "Use AI Pipe API for flexible data workflows",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            prompt: {
+                                type: "string",
+                                description: "The prompt to send to AI Pipe"
+                            },
+                            model: {
+                                type: "string",
+                                description: "Model to use (optional)",
+                                default: "gpt-3.5-turbo"
+                            }
+                        },
+                        required: ["prompt"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "execute_javascript",
+                    description: "Execute JavaScript code and return the result",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            code: {
+                                type: "string",
+                                description: "The JavaScript code to execute"
+                            }
+                        },
+                        required: ["code"]
+                    }
+                }
+            }
+        ];
+
+        // Utility functions
+        function showAlert(message, type = 'danger') {
+            const alertContainer = document.getElementById('alertContainer');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type} alert-dismissible fade show`;
+            alert.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            alertContainer.appendChild(alert);
+            setTimeout(() => alert.remove(), 5000);
+        }
+
+        function addMessage(content, type) {
+            const conversationDiv = document.getElementById('conversation');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.innerHTML = content;
+            conversationDiv.appendChild(messageDiv);
+            conversationDiv.scrollTop = conversationDiv.scrollHeight;
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function clearConversation() {
+            conversation = [];
+            document.getElementById('conversation').innerHTML = '';
+        }
+
+        // Tool implementations
+        async function googleSearch(query, numResults = 5) {
+            try {
+                // Mock implementation - in real use, you'd call Google Custom Search API
+                const mockResults = [
+                    { title: `${query} - Wikipedia`, snippet: `Information about ${query} from Wikipedia...`, url: `https://en.wikipedia.org/wiki/${query.replace(' ', '_')}` },
+                    { title: `${query} - Official Site`, snippet: `Official information about ${query}...`, url: `https://${query.toLowerCase().replace(' ', '')}.com` },
+                    { title: `${query} News`, snippet: `Latest news about ${query}...`, url: `https://news.google.com/search?q=${query}` }
+                ].slice(0, numResults);
+                
+                return {
+                    results: mockResults,
+                    total: mockResults.length
+                };
+            } catch (error) {
+                throw new Error(`Search failed: ${error.message}`);
+            }
+        }
+
+        async function aiPipe(prompt, model = 'gpt-3.5-turbo') {
+            try {
+                // Mock implementation - in real use, you'd call the AI Pipe API
+                return {
+                    response: `AI Pipe response to: "${prompt}". This is a mock response showing how the AI Pipe tool would work.`,
+                    model: model,
+                    tokens: 50
+                };
+            } catch (error) {
+                throw new Error(`AI Pipe failed: ${error.message}`);
+            }
+        }
+
+        function executeJavaScript(code) {
+            try {
+                // Create a sandboxed execution context
+                const result = eval(`
+                    (function() {
+                        const console = {
+                            log: (...args) => args.join(' ')
+                        };
+                        ${code}
+                    })()
+                `);
+                
+                return {
+                    success: true,
+                    result: result !== undefined ? String(result) : 'undefined',
+                    output: result
+                };
+            } catch (error) {
+                return {
+                    success: false,
+                    error: error.message,
+                    result: null
+                };
+            }
+        }
+
+        // Handle tool calls
+        async function handleToolCall(toolCall) {
+            const { name, arguments: args } = toolCall.function;
+            const parsedArgs = JSON.parse(args);
+            
+            addMessage(`🔧 Tool Call: ${name}(${JSON.stringify(parsedArgs)})`, 'tool-call');
+            
+            let result;
+            try {
+                switch (name) {
+                    case 'google_search':
+                        result = await googleSearch(parsedArgs.query, parsedArgs.num_results);
+                        break;
+                    case 'ai_pipe':
+                        result = await aiPipe(parsedArgs.prompt, parsedArgs.model);
+                        break;
+                    case 'execute_javascript':
+                        result = executeJavaScript(parsedArgs.code);
+                        break;
+                    default:
+                        throw new Error(`Unknown tool: ${name}`);
+                }
+                
+                addMessage(`✅ Tool Result: <pre>${JSON.stringify(result, null, 2)}</pre>`, 'tool-result');
+                
+                return {
+                    tool_call_id: toolCall.id,
+                    role: "tool",
+                    content: JSON.stringify(result)
+                };
+                
+            } catch (error) {
+                const errorResult = { error: error.message };
+                addMessage(`❌ Tool Error: <pre>${JSON.stringify(errorResult, null, 2)}</pre>`, 'tool-result');
+                
+                return {
+                    tool_call_id: toolCall.id,
+                    role: "tool",
+                    content: JSON.stringify(errorResult)
+                };
+            }
+        }
+
+        // Mock LLM API call (replace with actual API)
+        async function callLLM(messages) {
+            const apiKey = document.getElementById('apiKey').value;
+            const model = document.getElementById('modelSelect').value;
+            
+            if (!apiKey) {
+                throw new Error('Please enter your API key');
+            }
+
+            // Mock response for demonstration
+            // In real implementation, you would call the actual LLM API
+            const mockResponse = {
+                choices: [{
+                    message: {
+                        role: 'assistant',
+                        content: generateMockResponse(messages),
+                        tool_calls: generateMockToolCalls(messages)
+                    }
+                }]
+            };
+            
+            return mockResponse;
+        }
+
+        // Mock response generators for demonstration
+        function generateMockResponse(messages) {
+            const lastMessage = messages[messages.length - 1];
+            const userContent = lastMessage.content.toLowerCase();
+            
+            if (userContent.includes('search') || userContent.includes('find')) {
+                return "I'll search for that information for you.";
+            } else if (userContent.includes('code') || userContent.includes('calculate')) {
+                return "Let me execute some code to help with that.";
+            } else if (userContent.includes('ai') || userContent.includes('analyze')) {
+                return "I'll use AI Pipe to analyze this for you.";
+            } else {
+                return "I understand. Let me help you with that.";
+            }
+        }
+
+        function generateMockToolCalls(messages) {
+            const lastMessage = messages[messages.length - 1];
+            const userContent = lastMessage.content.toLowerCase();
+            
+            if (userContent.includes('search') || userContent.includes('find')) {
+                return [{
+                    id: 'call_' + Date.now(),
+                    type: 'function',
+                    function: {
+                        name: 'google_search',
+                        arguments: JSON.stringify({
+                            query: extractSearchQuery(userContent),
+                            num_results: 3
+                        })
+                    }
+                }];
+            } else if (userContent.includes('code') || userContent.includes('calculate')) {
+                return [{
+                    id: 'call_' + Date.now(),
+                    type: 'function',
+                    function: {
+                        name: 'execute_javascript',
+                        arguments: JSON.stringify({
+                            code: generateSampleCode(userContent)
+                        })
+                    }
+                }];
+            } else if (userContent.includes('ai') || userContent.includes('analyze')) {
+                return [{
+                    id: 'call_' + Date.now(),
+                    type: 'function',
+                    function: {
+                        name: 'ai_pipe',
+                        arguments: JSON.stringify({
+                            prompt: `Analyze: ${userContent}`
+                        })
+                    }
+                }];
+            }
+            
+            return null;
+        }
+
+        function extractSearchQuery(content) {
+            // Simple extraction logic
+            const words = content.split(' ');
+            const stopWords = ['search', 'find', 'for', 'about', 'on', 'the', 'a', 'an'];
+            const queryWords = words.filter(word => !stopWords.includes(word));
+            return queryWords.slice(0, 3).join(' ') || 'general search';
+        }
+
+        function generateSampleCode(content) {
+            if (content.includes('calculate') || content.includes('math')) {
+                return 'const result = 2 + 2 * 3; return result;';
+            }
+            return 'return "Hello from executed JavaScript!";';
+        }
+
+        // Main agent loop
+        async function agentLoop() {
+            if (isProcessing) return;
+            isProcessing = true;
+
+            try {
+                while (true) {
+                    const response = await callLLM(conversation);
+                    const message = response.choices[0].message;
+                    
+                    // Add LLM response to conversation
+                    conversation.push({
+                        role: 'assistant',
+                        content: message.content,
+                        tool_calls: message.tool_calls
+                    });
+                    
+                    // Display LLM output
+                    addMessage(`<strong>Agent:</strong> ${message.content}`, 'agent');
+                    
+                    // Handle tool calls if any
+                    if (message.tool_calls && message.tool_calls.length > 0) {
+                        const toolResults = await Promise.all(
+                            message.tool_calls.map(toolCall => handleToolCall(toolCall))
+                        );
+                        
+                        // Add tool results to conversation
+                        conversation.push(...toolResults);
+                    } else {
+                        // No tool calls, break the loop and wait for user input
+                        break;
+                    }
+                }
+            } catch (error) {
+                showAlert(`Error: ${error.message}`);
+            } finally {
+                isProcessing = false;
+            }
+        }
+
+        // Send message function
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            
+            if (!message || isProcessing) return;
+            
+            // Add user message to conversation
+            conversation.push({
+                role: 'user',
+                content: message
+            });
+            
+            // Display user message
+            addMessage(`<strong>You:</strong> ${message}`, 'user');
+            
+            // Clear input
+            input.value = '';
+            
+            // Start agent loop
+            await agentLoop();
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            addMessage('<strong>System:</strong> LLM Agent POC initialized. Available tools: Google Search, AI Pipe API, JavaScript Execution', 'agent');
+        });
+    </script>
+</body>
+</html>
